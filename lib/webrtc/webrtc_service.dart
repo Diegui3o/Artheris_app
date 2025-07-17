@@ -10,9 +10,24 @@ class WebRTCService {
   String? _roomId;
   final String _serverUrl = 'http://192.168.1.11:3002/webrtc';
   final Completer<void> _signalingReadyCompleter = Completer<void>();
-
+  List<MediaDeviceInfo> _availableCameras = [];
+  int _currentCameraIndex = 0;
+  
   // Callback para cuando la conexión se establece
   Function(RTCIceConnectionState)? onIceConnectionStateChange;
+  
+  // Get the current camera device info
+  MediaDeviceInfo? get currentCamera => 
+      _availableCameras.isNotEmpty ? _availableCameras[_currentCameraIndex] : null;
+      
+  // Get current camera index
+  int get currentCameraIndex => _currentCameraIndex;
+      
+  // Check if current camera is front-facing
+  bool get isFrontCamera => currentCamera?.label.toLowerCase().contains('front') ?? false;
+  
+  // Get available cameras list
+  List<MediaDeviceInfo> get availableCameras => List.unmodifiable(_availableCameras);
 
   // Getter para exponer el stream local de forma segura
   MediaStream? get localStream => _localStream;
@@ -214,28 +229,99 @@ class WebRTCService {
     }
   }
 
+  // Get list of available cameras
+  Future<List<MediaDeviceInfo>> getAvailableCameras() async {
+    final devices = await navigator.mediaDevices.enumerateDevices();
+    _availableCameras = devices.where((device) => device.kind == 'videoinput').toList();
+    print('${_availableCameras.length} cámaras disponibles:');
+    for (var i = 0; i < _availableCameras.length; i++) {
+      final camera = _availableCameras[i];
+      print('  $i: ${camera.label} (${camera.deviceId})');
+    }
+    return _availableCameras;
+  }
+
+  /// Switch to a specific camera by index
+  /// 
+  /// [cameraIndex] The index of the camera to switch to
+  /// 
+  /// Throws an [ArgumentError] if the index is invalid
+  Future<void> switchCamera(int cameraIndex) async {
+    if (cameraIndex < 0 || cameraIndex >= _availableCameras.length) {
+      final error = 'Índice de cámara inválido: $cameraIndex. Rango válido: 0-${_availableCameras.length - 1}';
+      print('❌ $error');
+      throw ArgumentError(error);
+    }
+
+    _currentCameraIndex = cameraIndex;
+    
+    print('🔄 Cambiando a cámara: ${_availableCameras[_currentCameraIndex].label} ' 
+        '(Frontal: ${isFrontCamera ? 'Sí' : 'No'})');
+    
+    // Stop current stream
+    if (_localStream != null) {
+      _localStream!.getTracks().forEach((track) => track.stop());
+    }
+    
+    // Start with new camera
+    await startStreaming();
+  }
+
+  /// Toggle between available cameras
+  /// 
+  /// This will cycle through all available cameras on the device.
+  /// If there's only one camera, this method does nothing.
+  Future<void> toggleCamera() async {
+    if (_availableCameras.length < 2) {
+      print('⚠️ No hay suficientes cámaras para cambiar');
+      return;
+    }
+    
+    // Switch to the next camera
+    _currentCameraIndex = (_currentCameraIndex + 1) % _availableCameras.length;
+    await switchCamera(_currentCameraIndex);
+  }
+
   Future<void> startStreaming() async {
     try {
       print('1. Obteniendo video de la cámara...');
-
-      // Primero verifiquemos los dispositivos disponibles
-      final devices = await navigator.mediaDevices.enumerateDevices();
-      print('Dispositivos multimedia disponibles:');
-      for (var device in devices) {
-        print(' - ${device.kind}: ${device.label} (${device.deviceId})');
+      
+      // Get available cameras if not already done
+      if (_availableCameras.isEmpty) {
+        await getAvailableCameras();
       }
 
-      // Configuración más simple para la cámara
+      // If no cameras available, throw error
+      if (_availableCameras.isEmpty) {
+        throw Exception('No se encontraron cámaras disponibles');
+      }
+
+      // Default to rear camera if available
+      if (_availableCameras.length > 1 && _currentCameraIndex == 0) {
+        // Try to find rear camera
+        final rearCameraIndex = _availableCameras.indexWhere(
+          (camera) => camera.label.toLowerCase().contains('back') || 
+                      camera.label.toLowerCase().contains('rear') ||
+                      camera.label.toLowerCase().contains('trasera')
+        );
+        
+        if (rearCameraIndex != -1) {
+          _currentCameraIndex = rearCameraIndex;
+        }
+      }
+
+      // Configure camera constraints
       final Map<String, dynamic> mediaConstraints = {
         'audio': false,
         'video': {
-          'facingMode': 'user',
+          'deviceId': _availableCameras[_currentCameraIndex].deviceId,
           'width': {'min': 640, 'ideal': 1280},
           'height': {'min': 480, 'ideal': 720},
           'frameRate': {'min': 15, 'ideal': 30},
         },
       };
-
+      
+      print('📷 Usando cámara: ${_availableCameras[_currentCameraIndex].label}');
       print('🔍 Intentando con restricciones: $mediaConstraints');
 
       // Intentar obtener el stream con las restricciones

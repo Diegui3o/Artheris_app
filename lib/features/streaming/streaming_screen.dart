@@ -11,7 +11,10 @@ class StreamingScreenState extends State<StreamingScreen> {
   late WebRTCService _webRTCService;
   final RTCVideoRenderer _localRenderer = RTCVideoRenderer();
   bool _isStreaming = false;
+  bool _isFrontCamera = false;
   String _status = 'Inicializando...';
+  bool _isSwitchingCamera = false;
+  List<MediaDeviceInfo> _availableCameras = [];
 
   @override
   void initState() {
@@ -36,6 +39,7 @@ class StreamingScreenState extends State<StreamingScreen> {
     setState(() {
       _isStreaming = true;
       _status = 'Iniciando transmisión...';
+      _availableCameras = [];
     });
 
     try {
@@ -72,6 +76,17 @@ class StreamingScreenState extends State<StreamingScreen> {
         final localStream = _webRTCService.localStream;
         
         if (mounted) {
+          // Get available cameras
+          try {
+            _availableCameras = await _webRTCService.getAvailableCameras();
+            // Check if current camera is front-facing
+            if (_availableCameras.isNotEmpty) {
+              _isFrontCamera = _availableCameras[_webRTCService.currentCameraIndex].label.toLowerCase().contains('front');
+            }
+          } catch (e) {
+            print('Error getting cameras: $e');
+          }
+          
           setState(() {
             _localRenderer.srcObject = localStream;
             _status = 'Transmisión activa';
@@ -155,14 +170,48 @@ class StreamingScreenState extends State<StreamingScreen> {
     );
   }
 
-  @override
+  Future<void> _toggleCamera() async {
+    if (_isSwitchingCamera || !_isStreaming || _availableCameras.length < 2) return;
+
+    setState(() {
+      _isSwitchingCamera = true;
+      _status = 'Cambiando de cámara...';
+    });
+
+    try {
+      await _webRTCService.toggleCamera();
+      
+      // Update camera state
+      if (_availableCameras.isNotEmpty) {
+        _isFrontCamera = _availableCameras[_webRTCService.currentCameraIndex].label.toLowerCase().contains('front');
+      }
+      
+      if (mounted) {
+        setState(() {
+          _localRenderer.srcObject = _webRTCService.localStream;
+          _status = 'Transmisión activa';
+        });
+      }
+    } catch (e) {
+      print('Error al cambiar de cámara: $e');
+      if (mounted) {
+        setState(() {
+          _status = 'Error al cambiar de cámara';
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSwitchingCamera = false;
+        });
+      }
+    }
+  }
+
   @override
   void dispose() {
-    if (_isStreaming) {
-      _stopStreaming().catchError((_) {});
-    }
-    _localRenderer.srcObject = null;
     _localRenderer.dispose();
+    _stopStreaming();
     super.dispose();
   }
 
@@ -170,59 +219,142 @@ class StreamingScreenState extends State<StreamingScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Transmitir Video'),
-        backgroundColor: Colors.redAccent,
+        title: const Text('Streaming en Vivo'),
+        backgroundColor: Colors.black87,
+        elevation: 0,
       ),
-      body: Column(
+      body: Stack(
         children: [
-          Expanded(
-            child: Container(
-              margin: const EdgeInsets.all(8.0),
-              decoration: BoxDecoration(
-                color: Colors.black,
-                border: Border.all(color: Colors.grey.shade800),
-                borderRadius: BorderRadius.circular(8.0),
-              ),
-              child: Stack(
-                children: [
-                  RTCVideoView(_localRenderer, mirror: true),
-                  if (_localRenderer.srcObject == null)
-                    Container(
-                      color: Colors.black,
-                      child: Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.videocam_off, size: 50, color: Colors.grey),
-                            SizedBox(height: 16),
-                            Text(
-                              'Esperando video...',
-                              style: TextStyle(color: Colors.white),
-                            ),
-                          ],
-                        ),
+          // Vista previa de la cámara
+          Positioned.fill(
+            child: _localRenderer.srcObject == null
+                ? Container(
+                    color: Colors.black,
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.videocam_off, size: 64, color: Colors.grey[600]),
+                          const SizedBox(height: 16),
+                          const Text(
+                            'Cámara no disponible',
+                            style: TextStyle(color: Colors.white70, fontSize: 18),
+                          ),
+                        ],
                       ),
                     ),
+                  )
+                : RTCVideoView(
+                    _localRenderer,
+                    mirror: _isFrontCamera,
+                    objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                  ),
+          ),
+          
+          // Overlay para controles
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.bottomCenter,
+                  end: Alignment.topCenter,
+                  colors: [
+                    Colors.black.withOpacity(0.8),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                children: [
+                  // Estado
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      _status,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  
+                  // Controles de grabación y cámara
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      // Botón para cambiar de cámara
+                      if (_isStreaming && _availableCameras.length > 1)
+                        FloatingActionButton(
+                          onPressed: _isSwitchingCamera ? null : _toggleCamera,
+                          backgroundColor: Colors.white24,
+                          elevation: 2,
+                          heroTag: 'switch_camera',  
+                          child: Icon(
+                            Icons.switch_camera,
+                            color: Colors.white,
+                            size: 28,
+                          ),
+                        )
+                      else
+                        const SizedBox(width: 56), 
+                      
+                      // Botón de inicio/detención
+                      FloatingActionButton(
+                        onPressed: _isStreaming ? _stopStreaming : _startStreaming,
+                        backgroundColor: _isStreaming ? Colors.red : Colors.redAccent,
+                        elevation: 4,
+                        heroTag: 'start_stop',  
+                        child: Icon(
+                          _isStreaming ? Icons.stop : Icons.videocam,
+                          size: 32,
+                        ),
+                      ),
+                      
+                      // Espaciado para mantener la alineación
+                      if (_isStreaming && _availableCameras.length > 1)
+                        const SizedBox(width: 56)
+                      else if (!_isStreaming)
+                        const SizedBox(width: 56),
+                    ],
+                  ),
                 ],
               ),
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16.0),
-            child: Text(
-              _status,
-              style: const TextStyle(color: Colors.white, fontSize: 16),
+          
+          // Indicador de carga al cambiar de cámara
+          if (_isSwitchingCamera)
+            Container(
+              color: Colors.black54,
+              child: const Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                    SizedBox(height: 16),
+                    Text(
+                      'Cambiando cámara...',
+                      style: TextStyle(color: Colors.white, fontSize: 16),
+                    ),
+                  ],
+                ),
+              ),
             ),
-          ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: _isStreaming ? Colors.grey : Colors.red,
-        onPressed: _isStreaming ? _stopStreaming : _startStreaming,
-        tooltip: _isStreaming ? 'Detener' : 'Iniciar',
-        child: Icon(_isStreaming ? Icons.stop : Icons.play_arrow),
-      ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );
   }
 }

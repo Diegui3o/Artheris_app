@@ -1,69 +1,104 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
 class WebRTCService {
+  static const Duration _connectionTimeout = Duration(seconds: 15);
+  
+  final String serverUrl;
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
   io.Socket? _socket;
   String? _roomId;
-  final String _serverUrl = 'http://192.168.1.11:3002/webrtc';
   final Completer<void> _signalingReadyCompleter = Completer<void>();
   List<MediaDeviceInfo> _availableCameras = [];
   int _currentCameraIndex = 0;
+  bool _isDisposed = false;
   
+  WebRTCService({required this.serverUrl});
+
   // Callback para cuando la conexión se establece
   Function(RTCIceConnectionState)? onIceConnectionStateChange;
-  
+
   // Get the current camera device info
-  MediaDeviceInfo? get currentCamera => 
-      _availableCameras.isNotEmpty ? _availableCameras[_currentCameraIndex] : null;
-      
+  MediaDeviceInfo? get currentCamera => _availableCameras.isNotEmpty
+      ? _availableCameras[_currentCameraIndex]
+      : null;
+
   // Get current camera index
   int get currentCameraIndex => _currentCameraIndex;
-      
+
   // Check if current camera is front-facing
-  bool get isFrontCamera => currentCamera?.label.toLowerCase().contains('front') ?? false;
-  
+  bool get isFrontCamera =>
+      currentCamera?.label.toLowerCase().contains('front') ?? false;
+
   // Get available cameras list
-  List<MediaDeviceInfo> get availableCameras => List.unmodifiable(_availableCameras);
+  List<MediaDeviceInfo> get availableCameras =>
+      List.unmodifiable(_availableCameras);
 
   // Getter para exponer el stream local de forma segura
   MediaStream? get localStream => _localStream;
 
   Future<void> initialize(String roomId) async {
+    if (_isDisposed) {
+      throw StateError('WebRTCService has been disposed');
+    }
+
     _roomId = roomId;
-    print('🔄 Conectando a $_serverUrl...');
-
-    _socket = io.io(_serverUrl, <String, dynamic>{
-      'transports': ['websocket'],
-      'autoConnect': false,
-    });
-
-    _setupSignaling();
+    debugPrint('🔄 Conectando a $serverUrl...');
 
     try {
+      _socket = io.io(
+        serverUrl,
+        io.OptionBuilder()
+            .setTransports(['websocket'])
+            .enableAutoConnect()
+            .setReconnectionAttempts(3)
+            .setReconnectionDelay(1000)
+            .build(),
+      );
+
+      _setupSignaling();
       _socket!.connect();
-      // Agrega timeout
+      
       return _signalingReadyCompleter.future.timeout(
-        Duration(seconds: 10),
-        onTimeout: () =>
-            throw TimeoutException('No se pudo conectar al servidor'),
+        _connectionTimeout,
+        onTimeout: () {
+          _socket?.disconnect();
+          throw TimeoutException('No se pudo conectar al servidor después de ${_connectionTimeout.inSeconds} segundos');
+        },
       );
     } catch (e) {
-      print('❌ Error al conectar: $e');
+      debugPrint('❌ Error al inicializar WebRTCService: $e');
+      await dispose();
       rethrow;
     }
   }
 
   void _setupSignaling() {
+    if (_socket == null) return;
+
     _socket!.onConnect((_) {
-      print('✅ SIGNAL: Conectado al servidor de señalización!');
-      print('2. Uniéndose a la sala: $_roomId');
-      _socket!.emit('join', _roomId);
-      _socket!.onError((data) => print('❌ ERROR de Socket: $data'));
-      _socket!.on('error', (data) => print('❌ ERROR del Servidor: $data'));
+      if (_isDisposed) {
+        _socket?.disconnect();
+        return;
+      }
+      
+      debugPrint('✅ SIGNAL: Conectado al servidor de señalización!');
+      debugPrint('2. Uniéndose a la sala: $_roomId');
+      
+      try {
+        _socket!.emit('join', _roomId);
+      } catch (e) {
+        debugPrint('❌ Error al unirse a la sala: $e');
+        _signalingReadyCompleter.completeError(e);
+        return;
+      }
+      
+      _socket!.onError((data) => debugPrint('❌ ERROR de Socket: $data'));
+      _socket!.on('error', (data) => debugPrint('❌ ERROR del Servidor: $data'));
     });
 
     _socket!.on('joined', (_) {
@@ -180,18 +215,20 @@ class WebRTCService {
 
       // Enhanced ICE gathering state debugging
       print('🔄 Setting up ICE gathering state listener...');
-      
+
       _peerConnection!.onIceGatheringState = (state) {
         print('\n❄️ ===== ICE GATHERING STATE CHANGED =====');
         print('❄️ State: $state');
         print('❄️ Runtime Type: ${state.runtimeType}');
         print('❄️ String Value: "$state"');
         print('❄️ Index: ${state.index}');
-        
+
         // Try to detect completion state
         final stateStr = state.toString().toLowerCase();
         if (stateStr.contains('complete') || stateStr.contains('completed')) {
-          print('✅ ICE GATHERING COMPLETE: All ICE candidates have been gathered');
+          print(
+            '✅ ICE GATHERING COMPLETE: All ICE candidates have been gathered',
+          );
           // You can now safely proceed with any actions that depend on ICE gathering completion
         } else if (stateStr.contains('gathering')) {
           print('🔄 ICE GATHERING IN PROGRESS: Collecting ICE candidates...');
@@ -232,7 +269,9 @@ class WebRTCService {
   // Get list of available cameras
   Future<List<MediaDeviceInfo>> getAvailableCameras() async {
     final devices = await navigator.mediaDevices.enumerateDevices();
-    _availableCameras = devices.where((device) => device.kind == 'videoinput').toList();
+    _availableCameras = devices
+        .where((device) => device.kind == 'videoinput')
+        .toList();
     print('${_availableCameras.length} cámaras disponibles:');
     for (var i = 0; i < _availableCameras.length; i++) {
       final camera = _availableCameras[i];
@@ -242,33 +281,36 @@ class WebRTCService {
   }
 
   /// Switch to a specific camera by index
-  /// 
+  ///
   /// [cameraIndex] The index of the camera to switch to
-  /// 
+  ///
   /// Throws an [ArgumentError] if the index is invalid
   Future<void> switchCamera(int cameraIndex) async {
     if (cameraIndex < 0 || cameraIndex >= _availableCameras.length) {
-      final error = 'Índice de cámara inválido: $cameraIndex. Rango válido: 0-${_availableCameras.length - 1}';
+      final error =
+          'Índice de cámara inválido: $cameraIndex. Rango válido: 0-${_availableCameras.length - 1}';
       print('❌ $error');
       throw ArgumentError(error);
     }
 
     _currentCameraIndex = cameraIndex;
-    
-    print('🔄 Cambiando a cámara: ${_availableCameras[_currentCameraIndex].label} ' 
-        '(Frontal: ${isFrontCamera ? 'Sí' : 'No'})');
-    
+
+    print(
+      '🔄 Cambiando a cámara: ${_availableCameras[_currentCameraIndex].label} '
+      '(Frontal: ${isFrontCamera ? 'Sí' : 'No'})',
+    );
+
     // Stop current stream
     if (_localStream != null) {
       _localStream!.getTracks().forEach((track) => track.stop());
     }
-    
+
     // Start with new camera
     await startStreaming();
   }
 
   /// Toggle between available cameras
-  /// 
+  ///
   /// This will cycle through all available cameras on the device.
   /// If there's only one camera, this method does nothing.
   Future<void> toggleCamera() async {
@@ -276,35 +318,44 @@ class WebRTCService {
       print('⚠️ No hay suficientes cámaras para cambiar');
       return;
     }
-    
+
     // Switch to the next camera
-    _currentCameraIndex = (_currentCameraIndex + 1) % _availableCameras.length;
     await switchCamera(_currentCameraIndex);
   }
 
   Future<void> startStreaming() async {
+    if (_isDisposed) {
+      throw StateError('WebRTCService has been disposed');
+    }
+
     try {
-      print('1. Obteniendo video de la cámara...');
-      
-      // Get available cameras if not already done
+      // Verificar si ya hay un stream activo
+      if (_localStream != null) {
+        debugPrint('⚠️ Ya hay un stream activo. Deteniendo stream anterior...');
+        await _localStream!.dispose();
+        _localStream = null;
+      }
+
+      // Obtener cámaras disponibles si no se han obtenido
       if (_availableCameras.isEmpty) {
         await getAvailableCameras();
       }
 
-      // If no cameras available, throw error
+      // Si no hay cámaras disponibles, lanzar error
       if (_availableCameras.isEmpty) {
-        throw Exception('No se encontraron cámaras disponibles');
+        throw StateError('No se encontraron cámaras disponibles');
       }
 
       // Default to rear camera if available
       if (_availableCameras.length > 1 && _currentCameraIndex == 0) {
         // Try to find rear camera
         final rearCameraIndex = _availableCameras.indexWhere(
-          (camera) => camera.label.toLowerCase().contains('back') || 
-                      camera.label.toLowerCase().contains('rear') ||
-                      camera.label.toLowerCase().contains('trasera')
+          (camera) =>
+              camera.label.toLowerCase().contains('back') ||
+              camera.label.toLowerCase().contains('rear') ||
+              camera.label.toLowerCase().contains('trasera'),
         );
-        
+
         if (rearCameraIndex != -1) {
           _currentCameraIndex = rearCameraIndex;
         }
@@ -320,8 +371,10 @@ class WebRTCService {
           'frameRate': {'min': 15, 'ideal': 30},
         },
       };
-      
-      print('📷 Usando cámara: ${_availableCameras[_currentCameraIndex].label}');
+
+      print(
+        '📷 Usando cámara: ${_availableCameras[_currentCameraIndex].label}',
+      );
       print('🔍 Intentando con restricciones: $mediaConstraints');
 
       // Intentar obtener el stream con las restricciones
@@ -393,13 +446,62 @@ class WebRTCService {
   }
 
   Future<void> dispose() async {
-    print('Limpiando recursos...');
-    if (_localStream != null) {
-      await Future.wait(_localStream!.getTracks().map((track) => track.stop()));
+    if (_isDisposed) return;
+    _isDisposed = true;
+    
+    debugPrint('🔌 Cerrando conexiones WebRTC...');
+    
+    try {
+      // Stop all tracks in the local stream
+      if (_localStream != null) {
+        for (final track in _localStream!.getTracks()) {
+          try {
+            await track.stop();
+          } catch (e) {
+            debugPrint('❌ Error al detener track: $e');
+          }
+        }
+        await _localStream?.dispose();
+        _localStream = null;
+      }
+      
+      // Close peer connection
+      if (_peerConnection != null) {
+        try {
+          _peerConnection!.onIceCandidate = null;
+          _peerConnection!.onIceConnectionState = null;
+          _peerConnection!.onTrack = null;
+          await _peerConnection!.close();
+        } catch (e) {
+          debugPrint('❌ Error al cerrar la conexión PeerConnection: $e');
+        } finally {
+          _peerConnection = null;
+        }
+      }
+      
+      // Close socket connection
+      if (_socket != null) {
+        try {
+          _socket!.clearListeners();
+          _socket!.disconnect();
+          _socket!.dispose();
+        } catch (e) {
+          debugPrint('❌ Error al cerrar el socket: $e');
+        } finally {
+          _socket = null;
+        }
+      }
+      
+      if (!_signalingReadyCompleter.isCompleted) {
+        _signalingReadyCompleter.completeError(
+          StateError('WebRTCService was disposed before initialization completed'),
+        );
+      }
+      
+      debugPrint('✅ Conexiones WebRTC cerradas correctamente');
+    } catch (e) {
+      debugPrint('❌ Error durante la limpieza de WebRTC: $e');
+      rethrow;
     }
-    await _localStream?.dispose();
-    await _peerConnection?.close();
-    _socket?.disconnect();
-    _socket?.dispose();
   }
 }

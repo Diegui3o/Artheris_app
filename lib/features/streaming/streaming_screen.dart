@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:provider/provider.dart';
 import 'package:pri_app/webrtc/webrtc_service.dart';
+import 'package:pri_app/routes/server_url.dart';
 
 class StreamingScreen extends StatefulWidget {
   @override
@@ -35,7 +37,7 @@ class StreamingScreenState extends State<StreamingScreen> {
 
   Future<void> _startStreaming() async {
     if (_isStreaming) return;
-    
+
     setState(() {
       _isStreaming = true;
       _status = 'Iniciando transmisión...';
@@ -43,30 +45,33 @@ class StreamingScreenState extends State<StreamingScreen> {
     });
 
     try {
-      _webRTCService = WebRTCService();
+      // Obtener la URL del servidor del ServerUrlManager
+      final urlManager = Provider.of<ServerUrlManager>(context, listen: false);
+      final serverUrl = await urlManager.getServerUrl();
+      final webrtcUrl = '$serverUrl/webrtc';
       
+      _webRTCService = WebRTCService(serverUrl: webrtcUrl);
+
       // Mostrar un diálogo de carga
       if (!mounted) return;
       showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (context) => const Center(
-          child: CircularProgressIndicator(),
-        ),
+        builder: (context) => const Center(child: CircularProgressIndicator()),
       );
 
       try {
         await _webRTCService.initialize('test-room');
-        
+
         _webRTCService.onIceConnectionStateChange = (state) {
           if (mounted) {
             setState(() {
               _status = 'Estado ICE: ${state.name}';
             });
           }
-          
+
           // Si la conexión falla, detener el streaming
-          if (state.toString().contains('failed') || 
+          if (state.toString().contains('failed') ||
               state.toString().contains('disconnected')) {
             _stopStreaming();
           }
@@ -74,32 +79,33 @@ class StreamingScreenState extends State<StreamingScreen> {
 
         await _webRTCService.startStreaming();
         final localStream = _webRTCService.localStream;
-        
+
         if (mounted) {
           // Get available cameras
           try {
             _availableCameras = await _webRTCService.getAvailableCameras();
             // Check if current camera is front-facing
             if (_availableCameras.isNotEmpty) {
-              _isFrontCamera = _availableCameras[_webRTCService.currentCameraIndex].label.toLowerCase().contains('front');
+              _isFrontCamera =
+                  _availableCameras[_webRTCService.currentCameraIndex].label
+                      .toLowerCase()
+                      .contains('front');
             }
           } catch (e) {
             print('Error getting cameras: $e');
           }
-          
+
           setState(() {
             _localRenderer.srcObject = localStream;
             _status = 'Transmisión activa';
           });
         }
-        
       } finally {
         // Cerrar el diálogo de carga
         if (mounted) {
           Navigator.of(context, rootNavigator: true).pop();
         }
       }
-      
     } catch (e) {
       print('Error en _startStreaming: $e');
       if (mounted) {
@@ -115,12 +121,12 @@ class StreamingScreenState extends State<StreamingScreen> {
 
   Future<void> _stopStreaming() async {
     if (!_isStreaming) return;
-    
+
     setState(() {
       _isStreaming = false;
       _status = 'Deteniendo transmisión...';
     });
-    
+
     try {
       await _webRTCService.dispose();
       if (mounted) {
@@ -137,7 +143,7 @@ class StreamingScreenState extends State<StreamingScreen> {
         });
       }
     }
-    
+
     // Actualizar el estado después de un breve retraso
     if (mounted) {
       Future.delayed(Duration(seconds: 2), () {
@@ -149,17 +155,15 @@ class StreamingScreenState extends State<StreamingScreen> {
       });
     }
   }
-  
+
   void _showErrorDialog(String title, String message) {
     if (!mounted) return;
-    
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(title),
-        content: SingleChildScrollView(
-          child: Text(message),
-        ),
+        content: SingleChildScrollView(child: Text(message)),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
@@ -171,7 +175,9 @@ class StreamingScreenState extends State<StreamingScreen> {
   }
 
   Future<void> _toggleCamera() async {
-    if (_isSwitchingCamera || !_isStreaming || _availableCameras.length < 2) return;
+    if (_isSwitchingCamera || !_isStreaming || _availableCameras.length < 2) {
+      return;
+    }
 
     setState(() {
       _isSwitchingCamera = true;
@@ -180,12 +186,15 @@ class StreamingScreenState extends State<StreamingScreen> {
 
     try {
       await _webRTCService.toggleCamera();
-      
+
       // Update camera state
       if (_availableCameras.isNotEmpty) {
-        _isFrontCamera = _availableCameras[_webRTCService.currentCameraIndex].label.toLowerCase().contains('front');
+        _isFrontCamera = _availableCameras[_webRTCService.currentCameraIndex]
+            .label
+            .toLowerCase()
+            .contains('front');
       }
-      
+
       if (mounted) {
         setState(() {
           _localRenderer.srcObject = _webRTCService.localStream;
@@ -234,11 +243,18 @@ class StreamingScreenState extends State<StreamingScreen> {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.videocam_off, size: 64, color: Colors.grey[600]),
+                          Icon(
+                            Icons.videocam_off,
+                            size: 64,
+                            color: Colors.grey[600],
+                          ),
                           const SizedBox(height: 16),
                           const Text(
                             'Cámara no disponible',
-                            style: TextStyle(color: Colors.white70, fontSize: 18),
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 18,
+                            ),
                           ),
                         ],
                       ),
@@ -250,7 +266,7 @@ class StreamingScreenState extends State<StreamingScreen> {
                     objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
                   ),
           ),
-          
+
           // Overlay para controles
           Positioned(
             bottom: 0,
@@ -261,10 +277,7 @@ class StreamingScreenState extends State<StreamingScreen> {
                 gradient: LinearGradient(
                   begin: Alignment.bottomCenter,
                   end: Alignment.topCenter,
-                  colors: [
-                    Colors.black.withOpacity(0.8),
-                    Colors.transparent,
-                  ],
+                  colors: [Colors.black.withOpacity(0.8), Colors.transparent],
                 ),
               ),
               padding: const EdgeInsets.all(24.0),
@@ -272,7 +285,10 @@ class StreamingScreenState extends State<StreamingScreen> {
                 children: [
                   // Estado
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.black54,
                       borderRadius: BorderRadius.circular(20),
@@ -288,7 +304,7 @@ class StreamingScreenState extends State<StreamingScreen> {
                     ),
                   ),
                   const SizedBox(height: 24),
-                  
+
                   // Controles de grabación y cámara
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -299,7 +315,7 @@ class StreamingScreenState extends State<StreamingScreen> {
                           onPressed: _isSwitchingCamera ? null : _toggleCamera,
                           backgroundColor: Colors.white24,
                           elevation: 2,
-                          heroTag: 'switch_camera',  
+                          heroTag: 'switch_camera',
                           child: Icon(
                             Icons.switch_camera,
                             color: Colors.white,
@@ -307,20 +323,24 @@ class StreamingScreenState extends State<StreamingScreen> {
                           ),
                         )
                       else
-                        const SizedBox(width: 56), 
-                      
+                        const SizedBox(width: 56),
+
                       // Botón de inicio/detención
                       FloatingActionButton(
-                        onPressed: _isStreaming ? _stopStreaming : _startStreaming,
-                        backgroundColor: _isStreaming ? Colors.red : Colors.redAccent,
+                        onPressed: _isStreaming
+                            ? _stopStreaming
+                            : _startStreaming,
+                        backgroundColor: _isStreaming
+                            ? Colors.red
+                            : Colors.redAccent,
                         elevation: 4,
-                        heroTag: 'start_stop',  
+                        heroTag: 'start_stop',
                         child: Icon(
                           _isStreaming ? Icons.stop : Icons.videocam,
                           size: 32,
                         ),
                       ),
-                      
+
                       // Espaciado para mantener la alineación
                       if (_isStreaming && _availableCameras.length > 1)
                         const SizedBox(width: 56)
@@ -332,7 +352,7 @@ class StreamingScreenState extends State<StreamingScreen> {
               ),
             ),
           ),
-          
+
           // Indicador de carga al cambiar de cámara
           if (_isSwitchingCamera)
             Container(

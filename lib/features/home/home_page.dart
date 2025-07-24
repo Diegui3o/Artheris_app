@@ -27,23 +27,11 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        title: Text(widget.title),
-      ),
-      body: Center(
-        child: _widgetOptions.elementAt(_selectedIndex),
-      ),
+      body: Center(child: _widgetOptions.elementAt(_selectedIndex)),
       bottomNavigationBar: BottomNavigationBar(
         items: const <BottomNavigationBarItem>[
-          BottomNavigationBarItem(
-            icon: Icon(Icons.sensors),
-            label: 'Sensores',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.camera),
-            label: 'Cámara',
-          ),
+          BottomNavigationBarItem(icon: Icon(Icons.sensors), label: 'Sensores'),
+          BottomNavigationBarItem(icon: Icon(Icons.camera), label: 'Cámara'),
         ],
         currentIndex: _selectedIndex,
         selectedItemColor: Colors.amber[800],

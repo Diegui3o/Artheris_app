@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'core/sensors/sensor_service.dart';
+import 'package:pri_app/core/sensors/sensor_service.dart';
 import 'core/camera/camera_service.dart';
 import 'features/home/home_page.dart';
 import 'features/routes/routes_menu.dart';
@@ -8,27 +8,59 @@ import 'routes/server_url.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Store the original debugPrint
+  final originalDebugPrint = debugPrint;
+  // Override debugPrint to add a prefix
+  debugPrint = (String? message, {int? wrapWidth}) {
+    originalDebugPrint('DEBUG: $message', wrapWidth: wrapWidth);
+  };
 
-  // Inicializar el ServerUrlManager
-  final urlManager = ServerUrlManager();
-  final initialUrl = await urlManager.getServerUrl();
+  try {
+    // Initialize ServerUrlManager
+    final urlManager = ServerUrlManager();
+    final initialUrl = await urlManager.getServerUrl();
+    
+    // Initialize and start sensor service
+    final sensorService = SensorService();
+    debugPrint('Initializing SensorService...');
+    
+    try {
+      sensorService.startListening();
+      debugPrint('SensorService started successfully');
+    } catch (e) {
+      debugPrint('Failed to start SensorService: $e');
+      // Continue anyway, the UI will show no data
+    }
 
-  runApp(
-    MultiProvider(
-      providers: [
-        Provider<SensorService>(
-          create: (context) => SensorService()..startListening(),
-          lazy: false,
+    runApp(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<SensorService>.value(
+            value: sensorService,
+          ),
+          Provider<CameraService>(
+            create: (context) => CameraService(),
+            lazy: false,
+          ),
+          Provider<ServerUrlManager>.value(value: urlManager),
+        ],
+        child: MyApp(initialUrl: initialUrl),
+      ),
+    );
+  } catch (e) {
+    debugPrint('Fatal error in main(): $e');
+    // Show error UI
+    runApp(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: Text('Failed to initialize app: $e'),
+          ),
         ),
-        Provider<CameraService>(
-          create: (context) => CameraService(),
-          lazy: false,
-        ),
-        Provider<ServerUrlManager>(create: (context) => urlManager),
-      ],
-      child: MyApp(initialUrl: initialUrl),
-    ),
-  );
+      ),
+    );
+  }
 }
 
 class MyApp extends StatefulWidget {

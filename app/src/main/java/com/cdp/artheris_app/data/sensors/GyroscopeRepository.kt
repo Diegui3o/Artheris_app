@@ -11,15 +11,17 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlin.math.PI
 
 data class GyroscopeReading(
-    val degPerSecX: Float,
-    val degPerSecY: Float,
-    val degPerSecZ: Float,
-    val mpuRawX: Int,
-    val mpuRawY: Int,
-    val mpuRawZ: Int,
+    val x: Float,      // deg/s (converted for user convenience)
+    val y: Float,
+    val z: Float,
     val timestamp: Long
 )
 
+/**
+ * Lee Sensor.TYPE_GYROSCOPE y devuelve grados/segundo en x,y,z.
+ * Android da rad/s, aquí convertimos a deg/s: deg = rad * 180/pi
+ * samplePeriodUs: SENSOR_DELAY_UI, GAME, FASTEST según necesites.
+ */
 class GyroscopeRepository(context: Context) {
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
     private val gyroSensor: Sensor? = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
@@ -37,16 +39,6 @@ class GyroscopeRepository(context: Context) {
                 val degX = rx * (180f / PI.toFloat())
                 val degY = ry * (180f / PI.toFloat())
                 val degZ = rz * (180f / PI.toFloat())
-
-                // Convertir a "raw MPU" aproximado (lo que leerías con Wire.read antes del /65.5)
-                val rawXf = degX * sensitivityLsbPerDps
-                val rawYf = degY * sensitivityLsbPerDps
-                val rawZf = degZ * sensitivityLsbPerDps
-
-                // Clamp a int16_t range y convertir a Int
-                val rawX = clampToInt16(rawXf)
-                val rawY = clampToInt16(rawYf)
-                val rawZ = clampToInt16(rawZf)
 
                 trySend(GyroscopeReading(degX, degY, degZ, now))
             }

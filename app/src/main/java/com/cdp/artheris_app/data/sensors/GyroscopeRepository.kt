@@ -9,20 +9,22 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlin.math.PI
+import kotlin.math.roundToInt
 
 data class GyroscopeReading(
-    val x: Float,      // deg/s (converted for user convenience)
-    val y: Float,
-    val z: Float,
+    val degPerSecX: Float,   // grados/segundo (convertido desde rad/s)
+    val degPerSecY: Float,
+    val degPerSecZ: Float,
+    val mpuRawX: Int,        // raw equivalente (int16) similar a Wire.read <<8 | Wire.read()
+    val mpuRawY: Int,
+    val mpuRawZ: Int,
     val timestamp: Long
 )
 
-/**
- * Lee Sensor.TYPE_GYROSCOPE y devuelve grados/segundo en x,y,z.
- * Android da rad/s, aquí convertimos a deg/s: deg = rad * 180/pi
- * samplePeriodUs: SENSOR_DELAY_UI, GAME, FASTEST según necesites.
- */
-class GyroscopeRepository(context: Context) {
+class GyroscopeRepository(
+    context: Context,
+    private val sensitivityLsbPerDps: Float = 65.5f // LSB/(°/s) — MPU típico ±500°/s
+) {
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
     private val gyroSensor: Sensor? = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
 
@@ -31,17 +33,40 @@ class GyroscopeRepository(context: Context) {
             override fun onSensorChanged(event: SensorEvent) {
                 if (event.sensor.type != Sensor.TYPE_GYROSCOPE) return
                 val now = System.currentTimeMillis()
-                // event.values are in rad/s
+
+                // Android entrega rad/s
                 val rx = event.values.getOrNull(0) ?: 0f
                 val ry = event.values.getOrNull(1) ?: 0f
                 val rz = event.values.getOrNull(2) ?: 0f
 
+                // 1) convertir rad/s -> deg/s
                 val degX = rx * (180f / PI.toFloat())
                 val degY = ry * (180f / PI.toFloat())
                 val degZ = rz * (180f / PI.toFloat())
 
-                trySend(GyroscopeReading(degX, degY, degZ, now))
+                // 2) calcular raw equivalente MPU (antes del /65.5)
+                val rawXf = degX * sensitivityLsbPerDps
+                val rawYf = degY * sensitivityLsbPerDps
+                val rawZf = degZ * sensitivityLsbPerDps
+
+                // 3) clamp a rango int16 para simular int16_t GyroX
+                val rawX = clampToInt16(rawXf)
+                val rawY = clampToInt16(rawYf)
+                val rawZ = clampToInt16(rawZf)
+
+                trySend(
+                    GyroscopeReading(
+                        degPerSecX = degX,
+                        degPerSecY = degY,
+                        degPerSecZ = degZ,
+                        mpuRawX = rawX,
+                        mpuRawY = rawY,
+                        mpuRawZ = rawZ,
+                        timestamp = now
+                    )
+                )
             }
+
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) { /* no-op */ }
         }
 
@@ -52,5 +77,14 @@ class GyroscopeRepository(context: Context) {
         }
 
         awaitClose { sensorManager.unregisterListener(listener) }
+    }
+
+    private fun clampToInt16(v: Float): Int {
+        val r = v.roundToInt()
+        return when {
+            r > Short.MAX_VALUE -> Short.MAX_VALUE.toInt()
+            r < Short.MIN_VALUE -> Short.MIN_VALUE.toInt()
+            else -> r
+        }
     }
 }

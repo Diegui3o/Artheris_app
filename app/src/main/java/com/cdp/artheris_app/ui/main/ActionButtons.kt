@@ -18,8 +18,6 @@ fun ActionButtons(
     Column {
         Button(onClick = onCalibrateAccel) { Text("Calibrar offset") }
         Spacer(modifier = Modifier.height(6.dp))
-        Button(onClick = onCalibrateMag) { Text("Calibrar magnetometro") }
-        Spacer(modifier = Modifier.height(6.dp))
         Button(onClick = onChangeParams) { Text("Cambiar parametros") }
     }
 }

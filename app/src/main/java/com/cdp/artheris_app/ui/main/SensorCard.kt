@@ -29,7 +29,7 @@ fun SensorCard(
         Column(modifier = Modifier.padding(16.dp)) {
             Text(title, fontSize = 18.sp, color = Color.Black)
             Spacer(modifier = Modifier.height(8.dp))
-            content()
+            content() // 👈 Aquí van las InfoRow de YawCard
             Spacer(modifier = Modifier.height(8.dp))
             Text("Timestamp: $timestampText", color = Color.DarkGray, fontSize = 12.sp)
         }

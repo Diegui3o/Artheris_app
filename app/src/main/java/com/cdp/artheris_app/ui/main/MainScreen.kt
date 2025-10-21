@@ -1,6 +1,8 @@
 package com.cdp.artheris_app.ui.main
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -19,11 +21,16 @@ fun MainScreen(mainViewModel: MainViewModel = viewModel()) {
     val gyroState  by mainViewModel.gyro.collectAsState()
     val anglesState by mainViewModel.angles.collectAsState()
     val filteredAnglesState by mainViewModel.filteredAngles.collectAsState(initial = null as AnglesFilteredReading?)
+    val orientationState by mainViewModel.orientation.collectAsState()
 
+    val scrollState = rememberScrollState()
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(scrollState)                 // ← hace scroll vertical
             .padding(WindowInsets.statusBars.asPaddingValues())
+            .navigationBarsPadding()                     // ← evita que lo tape la barra inferior
+            .imePadding()                                // ← evita teclado superponiéndose
             .padding(16.dp),
         verticalArrangement = Arrangement.Top,
         horizontalAlignment = Alignment.CenterHorizontally
@@ -67,13 +74,23 @@ fun MainScreen(mainViewModel: MainViewModel = viewModel()) {
             timestamp = filteredAnglesState?.timestamp,
             modifier = Modifier.fillMaxWidth()
         )
-
         Spacer(modifier = Modifier.height(12.dp))
 
+        YawCard(
+            orientation = orientationState,
+            modifier = Modifier.fillMaxWidth()
+        )
+        
+        Spacer(modifier = Modifier.height(12.dp))
+
+        YawControls(
+            onCalibrateZeroNow = { mainViewModel.calibrateHeadingToCurrent() }
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
         // Botones: aquí pongo lambdas vacías para que compile; si añades funciones en el ViewModel,
         ActionButtons(
             onCalibrateAccel = { /* TODO: reemplazar por mainViewModel.calibrateAccel() si existe */ },
-            onCalibrateMag   = { /* TODO: reemplazar por mainViewModel.calibrateMagnetometer() si existe */ },
             onChangeParams   = { /* navegar o abrir dialogo */ }
         )
     }

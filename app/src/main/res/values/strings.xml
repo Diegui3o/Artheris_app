@@ -1,3 +1,9 @@
 <resources>
     <string name="app_name">Artheris_app</string>
+    <string name="tab_angle">Ángulo</string>
+    <string name="tab_wifi">Wi-Fi</string>
+    <string name="tab_camera">Cámara</string>
+    <string name="tab_gps">GPS</string>
+    <string name="tab_settings">Ajustes</string>
+    <string name="tab_status">Estado</string>
 </resources>
